@@ -2,6 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+from functools import lru_cache
 
 # Datos de instrumentos y voces, incluyendo piano y guitarra
 data = {
@@ -45,45 +46,55 @@ data = {
 
 df = pd.DataFrame(data)
 
-# Función para convertir frecuencia a posición logarítmica
+# Función optimizada para convertir frecuencia a posición logarítmica
+@lru_cache(maxsize=128)
 def freq_to_y(freq):
     return np.log2(freq / 440) * 12 + 49
 
-# Preparar datos para el gráfico
+# Preparar datos para el gráfico una sola vez
 df['y_min'] = df['Frecuencia_min'].apply(freq_to_y)
 df['y_max'] = df['Frecuencia_max'].apply(freq_to_y)
+df['y_range'] = df['y_max'] - df['y_min']
 
 st.title('Tesitura de Instrumentos y Voces para Arregladores Musicales')
 
 # Crear el gráfico
 fig = go.Figure()
 
-# Agregar líneas para las octavas
-octavas = [(440 * 2**i, f'C{i}') for i in range(-1, 8)]
-for freq, nota in octavas:
+# Agregar líneas para las octavas (pre-computado)
+octavas_data = [(440 * 2**i, f'C{i}') for i in range(-1, 8)]
+for freq, nota in octavas_data:
     y = freq_to_y(freq)
     fig.add_shape(type="line", x0=0, x1=1, y0=y, y1=y, 
                   line=dict(color="LightGrey", width=1, dash="dash"))
     fig.add_annotation(x=1.02, y=y, text=nota, showarrow=False, 
                        xanchor="left", font=dict(size=8))
 
-# Agregar barras para cada instrumento/voz
-for i, row in df.iterrows():
-    fig.add_trace(go.Bar(
-        y=[row['y_max'] - row['y_min']],
-        x=[row['Instrumento']],
-        base=row['y_min'],
-        marker_color=row['Color'],
-        name=row['Instrumento'],
-        orientation='v',
-        hovertemplate=(
-            f"<b>{row['Instrumento']}</b><br>" +
-            f"Tipo: {row['Tipo']}<br>" +
-            f"Rango: {row['Nota_min']} - {row['Nota_max']}<br>" +
-            f"Frecuencia: {row['Frecuencia_min']:.0f} - {row['Frecuencia_max']:.0f} Hz" +
-            "<extra></extra>"
-        )
-    ))
+# Optimización: Usar un solo trace con múltiples barras en lugar de iterar
+custom_data = np.column_stack([
+    df['Instrumento'],
+    df['Tipo'],
+    df['Nota_min'],
+    df['Nota_max'],
+    df['Frecuencia_min'],
+    df['Frecuencia_max']
+])
+
+fig.add_trace(go.Bar(
+    y=df['y_range'],
+    x=df['Instrumento'],
+    base=df['y_min'],
+    marker_color=df['Color'],
+    customdata=custom_data,
+    hovertemplate=(
+        "<b>%{customdata[0]}</b><br>" +
+        "Tipo: %{customdata[1]}<br>" +
+        "Rango: %{customdata[2]} - %{customdata[3]}<br>" +
+        "Frecuencia: %{customdata[4]:.0f} - %{customdata[5]:.0f} Hz" +
+        "<extra></extra>"
+    ),
+    orientation='v'
+))
 
 fig.update_layout(
     title='Tesitura de Instrumentos y Voces',
